@@ -33,7 +33,26 @@ def validate_parent_dir(key, val, env):
         raise UserError("'%s' is not a directory: %s" % (key, os.path.dirname(val)))
 
 
-platforms = ("linux", "macos", "windows", "android", "ios", "web")
+def get_custom_tools_path(env):
+    path = env.get("custom_tools", None)
+    if path is not None:
+        return normalize_path(path, env)
+    return None
+
+
+def get_custom_platforms(env):
+    path = get_custom_tools_path(env)
+    if path is None:
+        return []
+    platforms = []
+    for x in os.listdir(path):
+        if not x.endswith(".py"):
+            continue
+        platforms.append(x.removesuffix(".py"))
+    return platforms
+
+
+platforms = ["linux", "macos", "windows", "android", "ios", "web"]
 
 # CPU architecture options.
 architecture_array = [
@@ -83,11 +102,24 @@ def options(opts, env):
         raise ValueError("Could not detect platform automatically, please specify with platform=<platform>")
 
     opts.Add(
+        PathVariable(
+            key="custom_tools",
+            help="Path to directory containing custom tools",
+            default=env.get("custom_tools", None),
+            validator=validate_dir,
+        )
+    )
+
+    opts.Update(env)
+
+    custom_platforms = get_custom_platforms(env)
+
+    opts.Add(
         EnumVariable(
             key="platform",
             help="Target platform",
             default=env.get("platform", default_platform),
-            allowed_values=platforms,
+            allowed_values=platforms + custom_platforms,
             ignorecase=2,
         )
     )
@@ -204,6 +236,12 @@ def options(opts, env):
         if hasattr(tool, "options"):
             tool.options(opts)
 
+    # Add custom options
+    for pl in custom_platforms:
+        tool = Tool(pl, toolpath=[get_custom_tools_path(env)])
+        if hasattr(tool, "options"):
+            tool.options(opts)
+
     # Targets flags tool (optimizations, debug symbols)
     target_tool = Tool("targets", toolpath=["tools"])
     target_tool.options(opts)
@@ -259,7 +297,10 @@ def generate(env):
     if env["use_hot_reload"]:
         env.Append(CPPDEFINES=["HOT_RELOAD_ENABLED"])
 
-    tool = Tool(env["platform"], toolpath=["tools"])
+    if env["platform"] in platforms:
+        tool = Tool(env["platform"], toolpath=["tools"])
+    else:
+        tool = Tool(env["platform"], toolpath=[get_custom_tools_path(env)])
 
     if tool is None or not tool.exists(env):
         raise ValueError("Required toolchain not found for platform " + env["platform"])
